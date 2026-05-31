@@ -1,0 +1,20 @@
+[
+  {
+    "name": "default",
+    "description": "My clone voice",
+    "languages": ["en"],
+    "default": true
+  },
+  {
+    "name": "luke",
+    "description": "Luke's voice",
+    "languages": ["en"],
+    "default": false
+  },
+  {
+    "name": "simon",
+    "description": "Simon's voice (German)",
+    "languages": ["de"],
+    "default": false
+  }
+]
