@@ -21,7 +21,7 @@ case "${1:-help}" in
     ;;
   gen|generate)
     shift
-    local sock=$(service_sock SDXL)
+    sock=$(service_sock SDXL)
     if [ ! -S "$sock" ]; then
       echo "Generate daemon not running — start with: models generate start"
       exit 1

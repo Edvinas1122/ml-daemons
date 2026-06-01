@@ -23,7 +23,7 @@ case "${1:-help}" in
     usage
     ;;
   *)
-    local sock=$(service_sock LLM)
+    sock=$(service_sock LLM)
     if [ ! -S "$sock" ]; then
       echo "LLM daemon not running — start with: models llm start"
       exit 1

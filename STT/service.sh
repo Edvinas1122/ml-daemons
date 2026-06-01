@@ -21,7 +21,7 @@ case "${1:-help}" in
     ;;
   transcribe)
     shift
-    local sock=$(service_sock STT)
+    sock=$(service_sock STT)
     if [ ! -S "$sock" ]; then
       echo "STT daemon not running — start with: models stt start"
       exit 1

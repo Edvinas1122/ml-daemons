@@ -21,7 +21,7 @@ case "${1:-help}" in
     ;;
   synthesize)
     shift
-    local sock=$(service_sock TTS)
+    sock=$(service_sock TTS)
     if [ ! -S "$sock" ]; then
       echo "TTS daemon not running — start with: models tts start"
       exit 1
