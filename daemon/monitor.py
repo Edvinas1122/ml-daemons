@@ -10,28 +10,6 @@ import sys
 import time
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-
-
-def discover_sockets():
-    """Scan the bus directory for *.sock files."""
-    cfg = {"bus_dir": "/tmp/monitor/"}
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH) as f:
-                cfg.update(json.load(f))
-        except Exception:
-            pass
-    bus_dir = cfg["bus_dir"]
-    if not os.path.isdir(bus_dir):
-        return []
-    result = []
-    for entry in os.listdir(bus_dir):
-        if entry.endswith(".sock"):
-            path = os.path.join(bus_dir, entry)
-            name = entry.rsplit("-", 1)[0] if "-" in entry else entry[:-5]
-            result.append((name, path))
-    return result
-
 COLORS = {
     "LLM": "\033[33m",
     "TTS": "\033[32m",
@@ -52,42 +30,68 @@ def matches_ignore(event_name, patterns):
     return False
 
 
+def load_bus_dir():
+    cfg = {"bus_dir": "/tmp/monitor/"}
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH) as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    return cfg["bus_dir"].rstrip("/")
+
+
+def connect_socket(name, path, conns):
+    if name in conns:
+        return
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(path)
+        f = s.makefile("rb")
+        conns[name] = f
+        print(f"{COLORS['DIM']}connected to {name} on {path}{COLORS['RESET']}", file=sys.stderr)
+    except Exception as e:
+        print(f"{COLORS['DIM']}{name}: {e}{COLORS['RESET']}", file=sys.stderr)
+
+
+def scan_and_connect(bus_dir, conns, seen):
+    if not os.path.isdir(bus_dir):
+        return
+    for entry in os.listdir(bus_dir):
+        if not entry.endswith(".sock"):
+            continue
+        path = os.path.join(bus_dir, entry)
+        if path in seen:
+            continue
+        seen.add(path)
+        name = entry.rsplit("-", 1)[0] if "-" in entry else entry[:-5]
+        connect_socket(name, path, conns)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ignore", "-i", action="append", default=[],
                         help="Event pattern to hide (repeatable, supports trailing wildcard)")
     args = parser.parse_args()
 
-    socks = discover_sockets()
-    if not socks:
-        print(f"No daemon bus sockets found in bus_dir. Start daemons first.")
-        sys.exit(1)
-
+    bus_dir = load_bus_dir()
     conns = {}
-    for name, path in socks:
-        if os.path.exists(path):
-            try:
-                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                s.connect(path)
-                f = s.makefile("rb")
-                conns[name] = f
-                print(f"{COLORS['DIM']}connected to {name} on {path}{COLORS['RESET']}", file=sys.stderr)
-            except Exception as e:
-                print(f"{COLORS['DIM']}{name}: {e}{COLORS['RESET']}", file=sys.stderr)
-
-    if not conns:
-        print("No daemon event sockets found. Start daemons first.")
-        sys.exit(1)
-
+    seen = set()
     ignored = args.ignore
+
     if ignored:
         print(f"{COLORS['DIM']}ignoring: {', '.join(ignored)}{COLORS['RESET']}", file=sys.stderr)
 
-    print(f"\n{COLORS['BOLD']}Listening... (Ctrl+C to stop){COLORS['RESET']}", file=sys.stderr)
+    print(f"{COLORS['BOLD']}Watching {bus_dir}/ for daemon sockets... (Ctrl+C to stop){COLORS['RESET']}", file=sys.stderr)
     print(file=sys.stderr)
 
     try:
-        while conns:
+        while True:
+            scan_and_connect(bus_dir, conns, seen)
+            if not conns:
+                select.select([], [], [], 1.0)
+                continue
+
             readable, _, _ = select.select(list(conns.values()), [], [], 1.0)
             for f in readable:
                 name = next(n for n, v in conns.items() if v == f)
