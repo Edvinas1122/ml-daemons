@@ -6,11 +6,11 @@ case "${1:-help}" in
   tts)    shift; exec "$DIR/TTS/service.sh" "$@" ;;
   stt)    shift; exec "$DIR/STT/service.sh" "$@" ;;
   generate|image) shift; exec "$DIR/Generate/service.sh" "$@" ;;
-  daemon|monitor) shift; exec "$DIR/daemon/service.sh" "$@" ;;
-  status)
-    shift
-    exec "$DIR/daemon/status.sh" "$@"
-    ;;
+  daemon|monitor) shift; case "${1:-help}" in
+    status) shift; exec "$DIR/daemon/status.sh" "$@" ;;
+    *) exec "$DIR/daemon/service.sh" "$@" ;;
+  esac ;;
+  status) shift; exec "$DIR/daemon/status.sh" "$@" ;;
   list)
     shift
     exec "$DIR/scripts/list.sh" "$@"
