@@ -32,9 +32,9 @@ from eventbus import EventBus
 def daemon_config():
     """Load daemon builder config from ``daemon/config.json``.
 
-    Returns a dict with keys like ``bus_dir`` (default: ``/tmp/monitor/``).
+    Returns a dict with keys like ``venv`` and ``bus_dir``.
     """
-    cfg = {"bus_dir": "/tmp/monitor/"}
+    cfg = {"venv": os.path.expandvars("$HOME/torch-env"), "bus_dir": "/tmp/monitor/"}
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     if os.path.exists(config_path):
         try:

@@ -1,3 +1,4 @@
 {
+  "venv": "$HOME/torch-env",
   "bus_dir": "/tmp/monitor/"
 }

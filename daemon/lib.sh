@@ -1,7 +1,11 @@
-VENV="$HOME/torch-env"
 ML_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-read BUS_DIR < <("$VENV/bin/python3" -c "import json; print(json.load(open('$ML_DIR/daemon/config.json'))['bus_dir'])")
+eval "$(python3 -c "
+import json, os
+cfg = json.load(open('$ML_DIR/daemon/config.json'))
+for k in ('venv', 'bus_dir'):
+    print(f'{k}={os.path.expandvars(cfg[k])}')
+')"
 
 service_sock()  { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.sock"; }
 service_pid()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.pid"; }
