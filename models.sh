@@ -10,7 +10,6 @@ case "${1:-help}" in
     status) shift; exec "$DIR/daemon/status.sh" "$@" ;;
     *) exec "$DIR/daemon/service.sh" "$@" ;;
   esac ;;
-  status) shift; exec "$DIR/daemon/status.sh" "$@" ;;
   list)
     shift
     exec "$DIR/scripts/list.sh" "$@"
@@ -23,7 +22,6 @@ case "${1:-help}" in
       name=$(basename "$(dirname "$d")")
       echo "  $name"
     done
-    echo "  status"
     echo "  list"
     echo ""
     echo "Run 'models <service>' for per-service help."
