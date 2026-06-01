@@ -13,7 +13,7 @@ process, keeps weights in GPU memory, and communicates via Unix sockets.
 │  models tts start  ──► TTS/service.sh ──► tts_daemon.py │
 │  models stt start  ──► STT/service.sh ──► stt_daemon.py │
 │  models gen start  ──► Generate/service.sh → sdxl.py    │
-│  models daemon status  ──► scripts/status.sh            │
+│  models daemon status  ──► daemon/status.sh             │
 │  models daemon monitor ──► daemon/monitor.py            │
 └──────────────────────┬──────────────────────────────────┘
                        │ starts / stops / queries
@@ -127,6 +127,7 @@ ML/
 │   ├── daemon_builder.py    # run_daemon() — socket server skeleton
 │   ├── eventbus.py          # Push-based event broadcasting
 │   ├── monitor.py           # Live event viewer (connects to all event sockets)
+│   ├── status.sh            # GPU + running daemons status
 │   └── service.sh           # Entry point for `models daemon status|monitor`
 ├── LLM/service.sh           # models llm start|stop|<text>
 ├── TTS/service.sh           # models tts start|stop|synthesize

@@ -13,7 +13,7 @@ EOF
 
 case "${1:-help}" in
   status)
-    exec "$ML_ROOT/scripts/status.sh" "$@"
+    exec "$ML_ROOT/daemon/status.sh" "$@"
     ;;
   monitor)
     shift

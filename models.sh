@@ -9,7 +9,7 @@ case "${1:-help}" in
   daemon|monitor) shift; exec "$DIR/daemon/service.sh" "$@" ;;
   status)
     shift
-    exec "$DIR/scripts/status.sh" "$@"
+    exec "$DIR/daemon/status.sh" "$@"
     ;;
   list)
     shift
