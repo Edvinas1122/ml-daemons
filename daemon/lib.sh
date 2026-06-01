@@ -4,7 +4,7 @@ eval "$(python3 <<PYEOF
 import json, os
 cfg = json.load(open('$ML_DIR/daemon/config.json'))
 print('declare VENV="' + os.path.expandvars(cfg['venv']) + '"')
-print('declare BUS_DIR="' + os.path.expandvars(cfg['bus_dir']) + '"')
+print('declare BUS_DIR="' + os.path.expandvars(cfg['bus_dir']).rstrip('/') + '"')
 PYEOF
 )"
 
@@ -13,7 +13,8 @@ service_pid()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.pi
 service_log()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.log"; }
 
 wait_for_socket() {
-  local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-300} event_sock="$BUS_DIR/$label-$pid.sock"
+  local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-300}
+  local event_sock="$BUS_DIR/$label-$pid.sock"
   "$VENV/bin/python3" "$ML_DIR/scripts/wait_ready.py" "$event_sock" "$pid" "$label" "$timeout" || {
     echo "$label failed or timed out — check $log"
     tail -3 "$log" 2>/dev/null

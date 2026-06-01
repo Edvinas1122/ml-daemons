@@ -113,7 +113,6 @@ def run_daemon(
     bus_dir = cfg["bus_dir"]
     os.makedirs(bus_dir, exist_ok=True)
     bus_socket = os.path.join(bus_dir, f"{name}-{os.getpid()}.sock")
-
     if os.path.exists(args.socket):
         os.unlink(args.socket)
     if os.path.exists(bus_socket):

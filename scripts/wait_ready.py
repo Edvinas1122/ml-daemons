@@ -29,9 +29,13 @@ while time.time() < deadline:
                 if ev.get("status") == "ready":
                     print(f"{label} ready", flush=True)
                     sys.exit(0)
+        except socket.timeout:
+            print(f"{label} timed out", flush=True)
+            sys.exit(1)
         except Exception:
-            pass
-    time.sleep(0.5)
+            time.sleep(0.5)
+    else:
+        time.sleep(0.5)
 
 print(f"{label} timed out", flush=True)
 sys.exit(1)
