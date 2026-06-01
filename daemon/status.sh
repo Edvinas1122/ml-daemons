@@ -21,8 +21,8 @@ fi
 
 echo "║"
 echo "║  Services:"
-check_unix_socket "$TTS_SOCKET"  "$TTS_PID_FILE"  "TTS"    || true
-check_unix_socket "$STT_SOCKET"  "$STT_PID_FILE"  "STT"    || true
-check_unix_socket "$GEN_SOCKET"  "$GEN_PID_FILE"  "Generate" || true
-check_unix_socket "$LLM_SOCKET"  "$LLM_PID_FILE"  "LLM"    || true
+check_unix_socket "TTS"      "$TTS_SOCKET"  || true
+check_unix_socket "STT"      "$STT_SOCKET"  || true
+check_unix_socket "SDXL"     "$GEN_SOCKET"  || true
+check_unix_socket "LLM"      "$LLM_SOCKET"  || true
 echo "╚══════════════════════════════════════"

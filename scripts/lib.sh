@@ -40,14 +40,17 @@ kill_pid() {
 }
 
 check_unix_socket() {
-  local sock=$1 pid_file=$2 name=$3
-  if [ -S "$sock" ] && [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
-    echo "║    $name  socket $sock  running PID $(cat "$pid_file")"
-    return 0
-  else
-    echo "║    $name  stopped"
-    return 1
-  fi
+  local name=$1 sock=$2 pid
+  for bus_sock in /tmp/monitor/"$name"-*.sock; do
+    [ -S "$bus_sock" ] || continue
+    pid="${bus_sock##*-}"; pid="${pid%.sock}"
+    if [ -S "$sock" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "║    $name  socket $sock  running PID $pid"
+      return 0
+    fi
+  done
+  echo "║    $name  stopped"
+  return 1
 }
 
 daemon_start() {
