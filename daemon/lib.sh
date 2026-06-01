@@ -1,11 +1,12 @@
 ML_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-eval "$(python3 -c "
+eval "$(python3 <<PYEOF
 import json, os
 cfg = json.load(open('$ML_DIR/daemon/config.json'))
 for k in ('venv', 'bus_dir'):
     print(f'{k}={os.path.expandvars(cfg[k])}')
-')"
+PYEOF
+)"
 
 service_sock()  { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.sock"; }
 service_pid()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.pid"; }
