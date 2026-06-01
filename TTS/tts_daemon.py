@@ -5,7 +5,6 @@ import base64
 import json
 import os
 import sys
-import time
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 _ML = os.path.dirname(_DIR)
@@ -21,11 +20,11 @@ def setup():
     voices = load_voices_config()
     default_voice = get_default_voice(voices)
     if not default_voice:
-        print("No voices found!", flush=True)
-        sys.exit(1)
+        raise RuntimeError("No voices found in config")
+    
     engine = load_engine(config.get("model_path"), verbose=config.get("verbose"))
     session = create_session(engine, default_voice)
-    print(f"Default voice: {default_voice['name']} ({len(voices)} available)", flush=True)
+    
     return {"session": session, "voices": voices}
 
 
@@ -33,80 +32,73 @@ def handle_client(conn, state, bus):
     session = state["session"]
     voices = state["voices"]
 
-    if bus:
-        bus.emit("tts.connection_open")
+    bus.emit("tts.connection_open")
+    
+    data = conn.recv(65536).decode()
+    msg = json.loads(data)
+    cmd = msg.get("type")
 
-    try:
-        f = conn.makefile("rb")
-        data = f.read().decode()
-        f.close()
-        msg = json.loads(data)
-        cmd = msg.get("type")
+    if cmd == "synthesize":
+        text = msg.get("text", "").strip()
+        if not text:
+            conn.sendall(json.dumps({"error": "text is required"}).encode())
+            bus.emit("tts.synthesize_error", error="text is required")
+            return
 
-        if cmd == "synthesize":
-            text = msg.get("text", "").strip()
-            if not text:
-                conn.sendall(json.dumps({"error": "text is required"}).encode())
-                return
+        voice = msg.get("voice")
+        lang = msg.get("lang")
+        if voice or lang:
+            session.configure(voice=voice, lang=lang)
 
-            voice = msg.get("voice")
-            lang = msg.get("lang")
-            if voice or lang:
-                session.configure(voice=voice, lang=lang)
+        bus.emit("tts.synthesize_start", text=text, voice=voice, lang=lang)
 
-            if bus:
-                bus.emit("tts.synthesize_start", text=text, voice=voice, lang=lang)
-
-            out = conn.makefile("wb")
-            total_samples = 0
-            for chunk in session.generate(text, lang_code=lang):
-                audio = chunk["audio"]
-                total_samples += len(audio) // 2
-                b64 = base64.b64encode(audio).decode()
-                line = json.dumps({"type": "audio", "data": b64, "sample_rate": session.sample_rate})
-                out.write(line.encode() + b"\n")
-                out.flush()
-
-            out.write(json.dumps({"type": "done", "samples": total_samples}).encode() + b"\n")
+        out = conn.makefile("wb")
+        total_samples = 0
+        
+        for chunk in session.generate(text, lang_code=lang):
+            audio = chunk["audio"]
+            total_samples += len(audio) // 2
+            b64 = base64.b64encode(audio).decode()
+            line = json.dumps({"type": "audio", "data": b64, "sample_rate": session.sample_rate})
+            out.write(line.encode() + b"\n")
             out.flush()
-            out.close()
 
-            if bus:
-                bus.emit("tts.synthesize_done", text=text, samples=total_samples)
+        out.write(json.dumps({"type": "done", "samples": total_samples}).encode() + b"\n")
+        out.flush()
+        out.close()
 
-        elif cmd == "configure":
-            session.configure(
-                voice=msg.get("voice"),
-                lang=msg.get("lang"),
-                speed=msg.get("speed"),
-            )
-            conn.sendall(json.dumps({
-                "status": "ok",
-                "voice": session.ref_audio,
-                "lang": session.lang,
-                "speed": session.speed,
-            }).encode())
+        bus.emit("tts.synthesize_done", text=text, samples=total_samples)
 
-        elif cmd == "voices":
-            conn.sendall(json.dumps({
-                "voices": [
-                    {"name": v["name"], "description": v.get("description", ""),
-                     "languages": v.get("languages", [])}
-                    for v in voices
-                ],
-            }).encode())
+    elif cmd == "configure":
+        session.configure(
+            voice=msg.get("voice"),
+            lang=msg.get("lang"),
+            speed=msg.get("speed"),
+        )
+        conn.sendall(json.dumps({
+            "status": "ok",
+            "voice": session.ref_audio,
+            "lang": session.lang,
+            "speed": session.speed,
+        }).encode())
+        bus.emit("tts.configured", voice=session.ref_audio, lang=session.lang, speed=session.speed)
 
-        else:
-            conn.sendall(json.dumps({"error": f"unknown command: {cmd}"}).encode())
-    except Exception as e:
-        try:
-            conn.sendall(json.dumps({"error": str(e)}).encode())
-        except Exception:
-            pass
-    finally:
-        if bus:
-            bus.emit("tts.connection_close")
-        conn.close()
+    elif cmd == "voices":
+        conn.sendall(json.dumps({
+            "voices": [
+                {
+                    "name": v["name"],
+                    "description": v.get("description", ""),
+                    "languages": v.get("languages", [])
+                }
+                for v in voices
+            ],
+        }).encode())
+        bus.emit("tts.voices_listed", count=len(voices))
+
+    else:
+        bus.emit("tts.unknown_command", command=cmd)
+        conn.sendall(json.dumps({"error": f"unknown command: {cmd}"}).encode())
 
 
 if __name__ == "__main__":

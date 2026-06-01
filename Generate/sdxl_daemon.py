@@ -18,9 +18,7 @@ from daemon_builder import run_daemon
 
 
 def setup():
-    t0 = time.time()
     model_id = config.get("model", "stabilityai/stable-diffusion-xl-base-1.0")
-    print(f"Loading model: {model_id}", flush=True)
     pipe = StableDiffusionXLPipeline.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
@@ -30,66 +28,43 @@ def setup():
     pipe.enable_model_cpu_offload()
     pipe.enable_vae_slicing()
     pipe.enable_vae_tiling()
-    print(f"SDXL loaded in {time.time() - t0:.1f}s", flush=True)
-
     output_dir = os.path.expanduser(config.get("output_dir", "~/Pictures/generate"))
     os.makedirs(output_dir, exist_ok=True)
-
     return {"pipe": pipe, "output_dir": output_dir}
 
 
 def handle_client(conn, state, bus):
-    if bus:
-        bus.emit("sdxl.connection_open")
 
-    try:
-        conn.settimeout(5)
-        data = conn.recv(65536).decode()
-        conn.settimeout(None)
-        if bus:
-            bus.emit("sdxl.read_done", bytes=len(data))
+    data = conn.recv(65536).decode()
+    bus.emit("sdxl.read_done", bytes=len(data))
 
-        msg = json.loads(data)
-        if bus:
-            bus.emit("sdxl.parse_done")
+    msg = json.loads(data)
+    bus.emit("sdxl.parse_done")
 
-        prompt = msg.get("prompt", "")
-        neg = msg.get("negative", "blurry, low quality, ugly")
-        steps = msg.get("steps", 25)
+    prompt = msg.get("prompt", "")
+    neg = msg.get("negative", "blurry, low quality, ugly")
+    steps = msg.get("steps", 25)
 
-        if bus:
-            bus.emit("sdxl.generate_start", prompt=prompt, steps=steps)
-        print(f"[sdxl] generating {len(prompt)}c prompt, {steps} steps", flush=True)
+    bus.emit("sdxl.generate_start", prompt=prompt, steps=steps)
 
-        image = state["pipe"](
-            prompt=prompt,
-            negative_prompt=neg,
-            num_inference_steps=steps,
-        ).images[0]
+    image = state["pipe"](
+        prompt=prompt,
+        negative_prompt=neg,
+        num_inference_steps=steps,
+    ).images[0]
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)[:60]
-        fname = f"{ts}_{safe}.png"
-        path = os.path.join(state["output_dir"], fname)
-        image.save(path)
-        print(f"[sdxl] saved {path}", flush=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)[:60]
+    fname = f"{ts}_{safe}.png"
+    path = os.path.join(state["output_dir"], fname)
+    image.save(path)
+    print(f"[sdxl] saved {path}", flush=True)
 
-        if bus:
-            bus.emit("sdxl.generate_done", prompt=prompt, path=path, steps=steps)
+    bus.emit("sdxl.generate_done", prompt=prompt, path=path, steps=steps)
 
-        conn.sendall(json.dumps({"path": path}).encode())
-    except Exception as e:
-        print(f"[sdxl] ERROR: {e}", flush=True)
-        if bus:
-            bus.emit("sdxl.error", error=str(e))
-        try:
-            conn.sendall(json.dumps({"error": str(e)}).encode())
-        except Exception:
-            pass
-    finally:
-        if bus:
-            bus.emit("sdxl.connection_close")
-        conn.close()
+    # Send response (builder handles any send errors)
+    conn.sendall(json.dumps({"path": path}).encode())
+    # No close, no finally, no exception handling!
 
 
 if __name__ == "__main__":
@@ -98,4 +73,5 @@ if __name__ == "__main__":
         default_socket="/tmp/sdxl-daemon.sock",
         setup=setup,
         handle_client=handle_client,
+        # max_connection_duration=300.00 # 5 minutes per request
     )

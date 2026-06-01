@@ -81,6 +81,7 @@ def run_daemon(
     teardown=None,
     max_connections=5,
     startup_timeout=60,
+    connection_timeout=0, # default infinite
 ):
     """Run a Unix socket daemon.
 
@@ -141,12 +142,32 @@ def run_daemon(
     print(f"  bus on {bus_socket}", flush=True)
 
     def _handle(conn):
+        if connection_timeout > 0:
+            conn.settimeout(connection_timeout)
         try:
+            bus.emit(f"{name}.connection_open")
             handle_client(conn, state, bus)
-        except Exception:
-            pass
+        except socket.timeout:
+            bus.emit(f"{name}.connection_timeout")
+            try:
+                conn.sendall(b"ERROR: Timeout\n")
+            except:
+                pass
+        except Exception as e:
+            bus.emit(f"{name}.connection_error", error=str(e))
+            try:
+                conn.sendall(f"ERROR: {str(e)}\n".encode())
+            except:
+                pass
         finally:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)  # Graceful shutdown
+                conn.close()
+            except:
+                pass
             sem.release()
+            if not hasattr(conn, '_closed_emitted'):
+                bus.emit(f"{name}.connection_close")
 
     # ── Accept loop ────────────────────────────────────
     try:

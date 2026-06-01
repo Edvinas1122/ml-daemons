@@ -27,11 +27,13 @@ class EventBus:
     def __init__(self, socket_path):
         self.socket_path = socket_path
         self._server = None
-        self._subscribers: list = []
+        self._subscribers: dict = {}  # Changed from list to dict: {file_obj: addr}
         self._lock = threading.Lock()
         self._running = False
         self._handlers = {}
         self._ctrl_start = 0.0
+        self._ctrl_state = None
+        self._ctrl_bus = None
 
     def set_handlers(self, handlers, state, bus, teardown_fn=None):
         """Register command handlers accessible over the socket.
@@ -39,7 +41,6 @@ class EventBus:
         ``handlers`` is a dict ``{name: callable(cmd, state, bus) → dict}``.
         Built-in commands (ping, status, shutdown) are always available.
         """
-        builtins = {}
         self._ctrl_state = state
         self._ctrl_bus = bus
         self._ctrl_start = time.time()
@@ -49,15 +50,21 @@ class EventBus:
 
         def _status(cmd, s, b):
             keys = list(s.keys()) if isinstance(s, dict) else None
-            return {"pid": os.getpid(), "uptime": round(time.time() - self._ctrl_start, 2), "state_keys": keys}
+            return {
+                "pid": os.getpid(),
+                "uptime": round(time.time() - self._ctrl_start, 2),
+                "state_keys": keys
+            }
 
         def _shutdown(cmd, s, b):
             os.kill(os.getpid(), signal.SIGTERM)
             return {"ok": True}
 
-        builtins["ping"] = _ping
-        builtins["status"] = _status
-        builtins["shutdown"] = _shutdown
+        builtins = {
+            "ping": _ping,
+            "status": _status,
+            "shutdown": _shutdown
+        }
 
         self._handlers = dict(builtins)
         if handlers:
@@ -68,8 +75,8 @@ class EventBus:
         fn = self._handlers.get(name)
         if fn:
             try:
-                state = getattr(self, "_ctrl_state", None)
-                bus = getattr(self, "_ctrl_bus", None)
+                state = self._ctrl_state
+                bus = self._ctrl_bus
                 reply = fn(cmd, state, bus)
             except Exception as exc:
                 reply = {"error": str(exc)}
@@ -111,7 +118,7 @@ class EventBus:
             # subscriber — keep alive and push events
             f = conn.makefile("wb")
             with self._lock:
-                self._subscribers.append((f, addr))
+                self._subscribers[f] = addr  # Store as dict with file as key
             return
 
         data = raw.strip()
@@ -129,18 +136,19 @@ class EventBus:
             payload = data + b"\n"
             with self._lock:
                 dead = []
-                for f, _ in self._subscribers:
+                for f in self._subscribers.keys():
                     try:
                         f.write(payload)
                         f.flush()
                     except Exception:
                         dead.append(f)
                 for f in dead:
-                    self._subscribers.remove((f, None))
-                    try:
-                        f.close()
-                    except Exception:
-                        pass
+                    if f in self._subscribers:
+                        del self._subscribers[f]
+                        try:
+                            f.close()
+                        except Exception:
+                            pass
             conn.close()
         else:
             conn.close()
@@ -151,18 +159,19 @@ class EventBus:
         msg = (payload + "\n").encode()
         with self._lock:
             dead = []
-            for f, _ in self._subscribers:
+            for f in self._subscribers.keys():
                 try:
                     f.write(msg)
                     f.flush()
                 except Exception:
                     dead.append(f)
             for f in dead:
-                self._subscribers.remove((f, None))
-                try:
-                    f.close()
-                except Exception:
-                    pass
+                if f in self._subscribers:
+                    del self._subscribers[f]
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
 
     @property
     def subscriber_count(self):
@@ -177,7 +186,7 @@ class EventBus:
             except Exception:
                 pass
         with self._lock:
-            for f, _ in self._subscribers:
+            for f in list(self._subscribers.keys()):
                 try:
                     f.close()
                 except Exception:

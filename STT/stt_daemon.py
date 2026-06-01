@@ -46,6 +46,8 @@ def setup():
 
 
 def handle_client(conn, state, bus):
+    bus.emit("stt.connection_open")
+    
     f = conn.makefile("rb")
     out = conn.makefile("wb")
     buffer = []
@@ -54,68 +56,61 @@ def handle_client(conn, state, bus):
     engine = state["engine"]
     max_samples = state["max_buffer_samples"]
 
-    if bus:
-        bus.emit("stt.connection_open")
+    for line in f:
+        if not line.strip():
+            continue
+        
+        msg = json.loads(line.decode())
+        cmd = msg.get("type")
 
-    try:
-        for line in f:
-            if not line.strip():
-                continue
-            msg = json.loads(line.decode())
-            cmd = msg.get("type")
+        if cmd == "audio":
+            raw = base64.b64decode(msg["data"])
+            arr = decode_audio(raw, msg.get("format", "wav"))
 
-            if cmd == "audio":
-                raw = base64.b64decode(msg["data"])
-                arr = decode_audio(raw, msg.get("format", "wav"))
-
-                if total_samples + len(arr) > max_samples:
-                    if bus:
-                        bus.emit("stt.buffer_reject", total_samples=total_samples, max_samples=max_samples)
-                    out.write(json.dumps({"type": "error", "message": "buffer limit exceeded"}).encode() + b"\n")
-                    out.flush()
-                    break
-
-                buffer.append(arr)
-                total_samples += len(arr)
-                if bus:
-                    bus.emit("stt.audio_chunk", samples=len(arr), total_samples=total_samples)
-
-            elif cmd == "lang":
-                lang = msg.get("lang", lang)
-
-            elif cmd == "flush":
-                audio = np.concatenate(buffer) if buffer else np.array([], dtype=np.float32)
-                t0 = time.time()
-                segments, _ = engine.model.transcribe(
-                    audio, language=msg.get("lang", lang),
-                    beam_size=engine.beam_size, vad_filter=True,
-                )
-                result = [{"text": s.text.strip(), "start": s.start, "end": s.end} for s in segments]
-                full = " ".join(s["text"] for s in result)
-                dur = len(audio) / SAMPLE_RATE
-                elapsed = round(time.time() - t0, 2)
-                print(f"Transcribed {dur:.1f}s in {elapsed}s: {full[:60]}...", flush=True)
-                if bus:
-                    bus.emit("stt.transcribe_done", text=full, duration=round(dur, 2), time_s=elapsed, segments=len(result))
-
-                out.write(json.dumps({
-                    "type": "done", "text": full, "segments": result,
-                    "duration": round(dur, 2), "time_s": elapsed,
-                }).encode() + b"\n")
+            # Check buffer limit
+            if total_samples + len(arr) > max_samples:
+                bus.emit("stt.buffer_reject", total_samples=total_samples, max_samples=max_samples)
+                out.write(json.dumps({"type": "error", "message": "buffer limit exceeded"}).encode() + b"\n")
                 out.flush()
                 break
 
-            else:
-                out.write(json.dumps({"type": "error", "message": f"unknown: {cmd}"}).encode() + b"\n")
-                out.flush()
-    except Exception:
-        pass
-    finally:
-        if bus:
-            bus.emit("stt.connection_close")
-        f.close()
-        out.close()
-        conn.close()
+            buffer.append(arr)
+            total_samples += len(arr)
+            bus.emit("stt.audio_chunk", samples=len(arr), total_samples=total_samples)
+
+        elif cmd == "lang":
+            lang = msg.get("lang", lang)
+
+        elif cmd == "flush":
+            audio = np.concatenate(buffer) if buffer else np.array([], dtype=np.float32)
+            t0 = time.time()
+            
+            segments, _ = engine.model.transcribe(
+                audio, language=msg.get("lang", lang),
+                beam_size=engine.beam_size, vad_filter=True,
+            )
+            
+            result = [{"text": s.text.strip(), "start": s.start, "end": s.end} for s in segments]
+            full = " ".join(s["text"] for s in result)
+            dur = len(audio) / SAMPLE_RATE
+            elapsed = round(time.time() - t0, 2)
+            
+            bus.emit("stt.transcribe_done", text=full, duration=round(dur, 2), time_s=elapsed, segments=len(result))
+
+            out.write(json.dumps({
+                "type": "done",
+                "text": full,
+                "segments": result,
+                "duration": round(dur, 2),
+                "time_s": elapsed,
+            }).encode() + b"\n")
+            out.flush()
+            break
+
+        else:
+            bus.emit("stt.unknown_command", command=cmd)
+            out.write(json.dumps({"type": "error", "message": f"unknown: {cmd}"}).encode() + b"\n")
+            out.flush()
 
 
 if __name__ == "__main__":
