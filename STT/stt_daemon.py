@@ -42,24 +42,33 @@ def handle_client(conn, state, bus):
         bus.emit("stt.connection_open")
 
     try:
-        # ── Language line ───────────────────────────────
-        # First line is always a \n-terminated language tag (ISO 639-1).
-        # Send just "\n" for default (no language hint).
-        f = conn.makefile("rb")
-        first = f.readline().decode().strip()
-        if first:
-            lang = first
-
-        # ── Read raw PCM16 until EOF (SHUT_WR) ──────────
-        # Read through the same BufferedReader so no bytes from readline() are lost.
+        # ── Read everything until EOF ───────────────────
+        # First \n-terminated line is language, rest is raw PCM16.
         conn.settimeout(300)
+        f = conn.makefile("rb")
+        bus.emit("stt.rread start")
         raw = f.read()
+        bus.emit("stt.received shut wr")
+
         conn.settimeout(None)
         f.close()
-        if bus:
-            bus.emit("stt.audio_chunk", bytes=len(raw))
 
-        total_samples = len(raw) // 2
+
+
+        lang_line, sep, pcm = raw.partition(b"\n")
+        if bus:
+            bus.emit("stt.lang_line", raw=lang_line.hex() if lang_line else "(empty)")
+        if lang_line.strip():
+            lang = lang_line.decode(errors="replace").strip()
+        if bus:
+            bus.emit("stt.audio_chunk", bytes=len(pcm))
+        
+        # === ROBUST FIX ===
+        if len(pcm) % 2 != 0:
+            print(f"[STT] WARNING: Odd PCM length ({len(pcm)}), trimming last byte", flush=True)
+            pcm = pcm[:-1]   # drop the stray byte
+
+        total_samples = len(pcm) // 2
         if total_samples > max_samples:
             if bus:
                 bus.emit("stt.buffer_reject", total_samples=total_samples, max_samples=max_samples)
@@ -70,8 +79,9 @@ def handle_client(conn, state, bus):
             conn.sendall(json.dumps({"error": "no audio data"}).encode())
             return
 
+
         # ── Decode PCM16 → float32 ──────────────────────
-        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
         # ── Transcribe ──────────────────────────────────
         if bus:
