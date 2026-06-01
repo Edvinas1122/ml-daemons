@@ -1,15 +1,11 @@
 VENV="$HOME/torch-env"
 ML_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUS_DIR="/tmp/monitor"
 
-LLM_SOCKET="/tmp/llm-daemon.sock"
-LLM_PID_FILE="/tmp/llm-daemon.pid"
-TTS_SOCKET="/tmp/tts-daemon.sock"
-TTS_PID_FILE="/tmp/tts-daemon.pid"
-STT_SOCKET="/tmp/stt-daemon.sock"
-STT_PID_FILE="/tmp/stt-daemon.pid"
-GEN_SOCKET="/tmp/sdxl-daemon.sock"
-GEN_PID_FILE="/tmp/sdxl-daemon.pid"
+read BUS_DIR < <("$VENV/bin/python3" -c "import json; print(json.load(open('$ML_DIR/daemon/config.json'))['bus_dir'])")
+
+service_sock()  { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.sock"; }
+service_pid()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.pid"; }
+service_log()   { echo "/tmp/$(echo "$1" | tr '[:upper:]' '[:lower:]')-daemon.log"; }
 
 wait_for_socket() {
   local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-300} event_sock="$BUS_DIR/$label-$pid.sock"
@@ -41,7 +37,7 @@ kill_pid() {
 
 check_unix_socket() {
   local name=$1 sock=$2 pid
-  for bus_sock in /tmp/monitor/"$name"-*.sock; do
+  for bus_sock in "$BUS_DIR"/"$name"-*.sock; do
     [ -S "$bus_sock" ] || continue
     pid="${bus_sock##*-}"; pid="${pid%.sock}"
     if [ -S "$sock" ] && kill -0 "$pid" 2>/dev/null; then

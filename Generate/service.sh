@@ -14,18 +14,19 @@ EOF
 
 case "${1:-help}" in
   start)
-    daemon_start "SDXL" "$ML_ROOT/Generate" "sdxl_daemon.py" "$GEN_SOCKET" "$GEN_PID_FILE" /tmp/sdxl-daemon.log
+    daemon_start "SDXL" "$ML_ROOT/Generate" "sdxl_daemon.py" "$(service_sock SDXL)" "$(service_pid SDXL)" "$(service_log SDXL)"
     ;;
   stop)
-    kill_pid "$GEN_PID_FILE" "SDXL" "$GEN_SOCKET"
+    kill_pid "$(service_pid SDXL)" "SDXL" "$(service_sock SDXL)"
     ;;
   gen|generate)
     shift
-    if [ ! -S "$GEN_SOCKET" ]; then
+    local sock=$(service_sock SDXL)
+    if [ ! -S "$sock" ]; then
       echo "Generate daemon not running — start with: models generate start"
       exit 1
     fi
-    "$VENV/bin/python3" "$ML_ROOT/Generate/sdxl_client.py" "$GEN_SOCKET" "$*"
+    "$VENV/bin/python3" "$ML_ROOT/Generate/sdxl_client.py" "$sock" "$*"
     ;;
   help|--help|-h)
     usage

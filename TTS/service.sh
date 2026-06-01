@@ -14,18 +14,19 @@ EOF
 
 case "${1:-help}" in
   start)
-    daemon_start "TTS" "$ML_ROOT/TTS" "tts_daemon.py" "$TTS_SOCKET" "$TTS_PID_FILE" /tmp/tts-daemon.log
+    daemon_start "TTS" "$ML_ROOT/TTS" "tts_daemon.py" "$(service_sock TTS)" "$(service_pid TTS)" "$(service_log TTS)"
     ;;
   stop)
-    kill_pid "$TTS_PID_FILE" "TTS" "$TTS_SOCKET"
+    kill_pid "$(service_pid TTS)" "TTS" "$(service_sock TTS)"
     ;;
   synthesize)
     shift
-    if [ ! -S "$TTS_SOCKET" ]; then
+    local sock=$(service_sock TTS)
+    if [ ! -S "$sock" ]; then
       echo "TTS daemon not running — start with: models tts start"
       exit 1
     fi
-    "$VENV/bin/python3" "$ML_ROOT/TTS/tts_client.py" "$TTS_SOCKET" "$*"
+    "$VENV/bin/python3" "$ML_ROOT/TTS/tts_client.py" "$sock" "$*"
     ;;
   help|--help|-h)
     usage

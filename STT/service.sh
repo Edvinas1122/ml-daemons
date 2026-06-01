@@ -14,18 +14,19 @@ EOF
 
 case "${1:-help}" in
   start)
-    daemon_start "STT" "$ML_ROOT/STT" "stt_daemon.py" "$STT_SOCKET" "$STT_PID_FILE" /tmp/stt-daemon.log
+    daemon_start "STT" "$ML_ROOT/STT" "stt_daemon.py" "$(service_sock STT)" "$(service_pid STT)" "$(service_log STT)"
     ;;
   stop)
-    kill_pid "$STT_PID_FILE" "STT" "$STT_SOCKET"
+    kill_pid "$(service_pid STT)" "STT" "$(service_sock STT)"
     ;;
   transcribe)
     shift
-    if [ ! -S "$STT_SOCKET" ]; then
+    local sock=$(service_sock STT)
+    if [ ! -S "$sock" ]; then
       echo "STT daemon not running — start with: models stt start"
       exit 1
     fi
-    "$VENV/bin/python3" "$ML_ROOT/STT/stt_client.py" "$STT_SOCKET" "$@"
+    "$VENV/bin/python3" "$ML_ROOT/STT/stt_client.py" "$sock" "$@"
     ;;
   help|--help|-h)
     usage
