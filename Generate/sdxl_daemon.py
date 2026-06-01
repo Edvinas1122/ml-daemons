@@ -43,14 +43,25 @@ def handle_client(conn, state, bus):
         bus.emit("sdxl.connection_open")
 
     try:
-        data = conn.recv(65536).decode()
+        conn.settimeout(5)
+        f = conn.makefile("rb")
+        data = f.read().decode()
+        f.close()
+        conn.settimeout(None)
+        if bus:
+            bus.emit("sdxl.read_done", bytes=len(data))
+
         msg = json.loads(data)
+        if bus:
+            bus.emit("sdxl.parse_done")
+
         prompt = msg.get("prompt", "")
         neg = msg.get("negative", "blurry, low quality, ugly")
         steps = msg.get("steps", 25)
 
         if bus:
             bus.emit("sdxl.generate_start", prompt=prompt, steps=steps)
+        print(f"[sdxl] generating {len(prompt)}c prompt, {steps} steps", flush=True)
 
         image = state["pipe"](
             prompt=prompt,
@@ -63,12 +74,16 @@ def handle_client(conn, state, bus):
         fname = f"{ts}_{safe}.png"
         path = os.path.join(state["output_dir"], fname)
         image.save(path)
+        print(f"[sdxl] saved {path}", flush=True)
 
         if bus:
             bus.emit("sdxl.generate_done", prompt=prompt, path=path, steps=steps)
 
         conn.sendall(json.dumps({"path": path}).encode())
     except Exception as e:
+        print(f"[sdxl] ERROR: {e}", flush=True)
+        if bus:
+            bus.emit("sdxl.error", error=str(e))
         try:
             conn.sendall(json.dumps({"error": str(e)}).encode())
         except Exception:
