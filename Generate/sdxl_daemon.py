@@ -44,9 +44,7 @@ def handle_client(conn, state, bus):
 
     try:
         conn.settimeout(5)
-        f = conn.makefile("rb")
-        data = f.read().decode()
-        f.close()
+        data = conn.recv(65536).decode()
         conn.settimeout(None)
         if bus:
             bus.emit("sdxl.read_done", bytes=len(data))
