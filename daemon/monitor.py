@@ -22,9 +22,25 @@ COLORS = {
 }
 
 try:
-    from watchdog.events import FileSystemEventHandler
-    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler as _FSHandler
+    from watchdog.observers import Observer as _Observer
     HAS_WATCHDOG = True
+
+    class _SockHandler(_FSHandler):
+        def __init__(self, sock_queue):
+            self.sock_queue = sock_queue
+
+        def on_created(self, event):
+            if event.is_directory or not event.src_path.endswith(".sock"):
+                return
+            name = os.path.basename(event.src_path).rsplit("-", 1)[0] if "-" in os.path.basename(event.src_path) else os.path.basename(event.src_path)[:-5]
+            self.sock_queue.put((name, event.src_path))
+
+        def on_moved(self, event):
+            if event.is_directory or not event.dest_path.endswith(".sock"):
+                return
+            name = os.path.basename(event.dest_path).rsplit("-", 1)[0] if "-" in os.path.basename(event.dest_path) else os.path.basename(event.dest_path)[:-5]
+            self.sock_queue.put((name, event.dest_path))
 except ImportError:
     HAS_WATCHDOG = False
 
@@ -38,23 +54,6 @@ def load_bus_dir():
         except Exception:
             pass
     return cfg["bus_dir"].rstrip("/")
-
-
-class SockHandler(FileSystemEventHandler):
-    def __init__(self, sock_queue):
-        self.sock_queue = sock_queue
-
-    def on_created(self, event):
-        if event.is_directory or not event.src_path.endswith(".sock"):
-            return
-        name = os.path.basename(event.src_path).rsplit("-", 1)[0] if "-" in os.path.basename(event.src_path) else os.path.basename(event.src_path)[:-5]
-        self.sock_queue.put((name, event.src_path))
-
-    def on_moved(self, event):
-        if event.is_directory or not event.dest_path.endswith(".sock"):
-            return
-        name = os.path.basename(event.dest_path).rsplit("-", 1)[0] if "-" in os.path.basename(event.dest_path) else os.path.basename(event.dest_path)[:-5]
-        self.sock_queue.put((name, event.dest_path))
 
 
 def matches_ignore(event_name, patterns):
@@ -104,8 +103,8 @@ def main():
     observer = None
     if HAS_WATCHDOG:
         os.makedirs(bus_dir, exist_ok=True)
-        handler = SockHandler(sock_queue)
-        observer = Observer()
+        handler = _SockHandler(sock_queue)
+        observer = _Observer()
         observer.schedule(handler, bus_dir, recursive=False)
         observer.start()
         print(f"{COLORS['DIM']}watching {bus_dir}/ with watchdog{COLORS['RESET']}", file=sys.stderr)
