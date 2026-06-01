@@ -98,7 +98,6 @@ if __name__ == "__main__":
     run_daemon(
         "LLM",
         default_socket="/tmp/llm-daemon.sock",
-        default_event_socket="/tmp/llm-events.sock",
         setup=setup,
         handle_client=handle_client,
         startup_timeout=120,

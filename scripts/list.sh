@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ML_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-source "$ML_ROOT/scripts/lib.sh"
+source "$ML_ROOT/daemon/lib.sh"
 
 "$VENV/bin/python3" -c "
 from huggingface_hub import scan_cache_dir

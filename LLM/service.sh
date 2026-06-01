@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ML_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-source "$ML_ROOT/scripts/lib.sh"
+source "$ML_ROOT/daemon/lib.sh"
 
 usage() {
   cat <<'EOF'

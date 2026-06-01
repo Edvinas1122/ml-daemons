@@ -83,7 +83,6 @@ if __name__ == "__main__":
     run_daemon(
         "SDXL",
         default_socket="/tmp/sdxl-daemon.sock",
-        default_event_socket="/tmp/sdxl-events.sock",
         setup=setup,
         handle_client=handle_client,
     )

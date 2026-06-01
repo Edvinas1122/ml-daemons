@@ -14,7 +14,7 @@ _LANG_MAP = {
     "ja": "japanese", "ko": "korean", "fr": "french", "ru": "russian",
 }
 
-_VOICES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voices")
+_VOICES_DIR = os.path.join((os.path.dirname(os.path.abspath(__file__))), "voices")
 
 
 def _resolve_lang(lang):
@@ -34,6 +34,7 @@ def load_voices_config():
 
 
 def get_default_voice(voices):
+    print(voices)
     for v in voices:
         if v.get("default"):
             return v

@@ -113,7 +113,6 @@ if __name__ == "__main__":
     run_daemon(
         "TTS",
         default_socket="/tmp/tts-daemon.sock",
-        default_event_socket="/tmp/tts-events.sock",
         setup=setup,
         handle_client=handle_client,
     )

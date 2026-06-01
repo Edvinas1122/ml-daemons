@@ -122,7 +122,6 @@ if __name__ == "__main__":
     run_daemon(
         "STT",
         default_socket="/tmp/stt-daemon.sock",
-        default_event_socket="/tmp/stt-events.sock",
         setup=setup,
         handle_client=handle_client,
         max_connections=config.get("max_connections", 4),

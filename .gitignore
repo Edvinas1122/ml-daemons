@@ -16,3 +16,7 @@ venv/
 
 # stale output dirs (new outputs go to ~/Pictures/ ~/Music/)
 output/
+
+# HuggingFace model cache
+.huggingface/
+.cache/huggingface/

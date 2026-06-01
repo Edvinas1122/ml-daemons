@@ -1,3 +1,4 @@
 {
+  "model": "stabilityai/stable-diffusion-xl-base-1.0",
   "output_dir": "~/Pictures/generate"
 }
