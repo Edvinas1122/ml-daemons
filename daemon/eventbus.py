@@ -100,10 +100,12 @@ class EventBus:
             threading.Thread(target=self._handle_conn, args=(conn, addr), daemon=True, name="evt-conn").start()
 
     def _handle_conn(self, conn, addr):
+        conn.settimeout(0.1)
         try:
             raw = conn.recv(65536)
         except Exception:
             raw = b""
+        conn.settimeout(None)
 
         if not raw:
             # subscriber — keep alive and push events
