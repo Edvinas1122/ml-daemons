@@ -94,12 +94,18 @@ def run_daemon(
     os.chmod(args.socket, 0o777)
 
     # ── Setup (with timeout) ───────────────────────────
+    if bus:
+        bus.emit("setup", status="started")
+    t0 = time.time()
     timer = threading.Timer(args.startup_timeout, lambda: os._exit(1))
     timer.start()
     try:
-      state = setup()
+        state = setup()
     finally:
-      timer.cancel()
+        timer.cancel()
+    elapsed = time.time() - t0
+    if bus:
+        bus.emit("setup", status="ended", elapsed=round(elapsed, 2))
 
     # Signal readiness to bash
     with open(args.ready_file, "w") as f:
