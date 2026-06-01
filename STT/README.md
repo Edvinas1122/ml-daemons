@@ -1,7 +1,9 @@
 # STT — Speech-to-Text Daemon
 
 Unix socket speech-to-text daemon using `faster-whisper`.
-Keeps the model loaded between requests. Streaming NDJSON protocol.
+Keeps the model loaded between requests. Audio is received as raw
+[PCM16](https://en.wikipedia.org/wiki/Pulse-code_modulation) signed
+16-bit little-endian samples at 16 kHz.
 
 **Model**: [openai/whisper-base](https://github.com/openai/whisper) via `faster-whisper` (~150 MB, auto-downloaded)
 
@@ -40,38 +42,55 @@ Listens on Unix socket `/tmp/stt-daemon.sock`.
 
 ## Protocol
 
-Newline-delimited JSON (NDJSON) over a single connection.
+Each connection is one turn of speech. The client connects, sends
+raw PCM16 bytes, signals the end of the turn with
+[`SHUT_WR`](https://man7.org/linux/man-pages/man2/shutdown.2.html),
+waits for the transcription result as a single JSON line, then closes.
 
-### Client → Daemon
+### Connection lifecycle
 
 ```
-{"type":"lang","lang":"en"}\n                                    (optional)
-{"type":"audio","data":"<base64_pcm16>","format":"pcm16"}\n       (one or more chunks)
-{"type":"flush"}\n                                                 (transcribe and close)
+  Client                          Daemon
+    │                                │
+    │── connect ────────────────────→│ [accept(2)](https://man7.org/linux/man-pages/man2/accept.2.html)
+    │                                │
+    │── "en\n" ─────────────────────→│ optional language tag (skipped if empty)
+    │                                │
+    │── [raw PCM16 bytes] ──────────→│ buf += [recv(2)](https://man7.org/linux/man-pages/man2/recv.2.html)
+    │── [raw PCM16 bytes] ──────────→│ buf += recv()
+    │── [raw PCM16 bytes] ──────────→│ buf += recv()
+    │                                │
+    │── SHUT_WR ────────────────────→│ recv() → b""  ← EOF
+    │                                │ transcribe(buf)
+    │                                │
+    │←── {"text":"...","segments"}   │ sendall(response)
+    │                                │ close()
+    │── recv() → response ──────────→│
+    │                                │
+    │── close() ────────────────────→│
 ```
 
-Chunk size: 32 KB PCM (≈1 second at 16 kHz). Send sequentially, flush after the last chunk.
-Set language once with `lang` before the first `audio` message.
+### PCM16 format
 
-### Daemon → Client
+Audio data is raw signed 16-bit **little-endian** samples at **16 kHz**.
+No WAV header, no RIFF wrapper — just consecutive sample bytes.
 
-```json
-{"type":"done","text":"...","segments":[...],"duration":9.22,"time_s":0.34}
-```
+A 1-second chunk at 16 kHz = 32 000 bytes (16 000 samples × 2 bytes each).
 
-`segments` is an array of `{"text":"...","start":0.0,"end":6.5}`.
+[PCM — Wikipedia](https://en.wikipedia.org/wiki/Pulse-code_modulation)
 
-## Example
+### SHUT_WR — half-close
 
-```bash
-# Via models.sh
-~/Documents/code/ML/models.sh voice stt input.wav
+[`shutdown(SHUT_WR)`](https://man7.org/linux/man-pages/man2/shutdown.2.html)
+closes only the client's write side of the connection. The
+client can still read — the daemon sends the response on the same socket.
 
-# Directly
-echo '{"type":"lang","lang":"en"}
-{"type":"audio","data":"<base64>","format":"pcm16"}
-{"type":"flush"}' | nc -U /tmp/stt-daemon.sock
-```
+The daemon sees this as [`recv()`](https://man7.org/linux/man-pages/man2/recv.2.html)
+returning an empty byte string (`b""`), which signals
+**"end of turn — transcribe now."**
+
+No delimiter framing, no Base64, no special flush message. The byte stream
+and the half-close are the framing.
 
 ## Client script
 
@@ -79,11 +98,12 @@ echo '{"type":"lang","lang":"en"}
 python stt_client.py /tmp/stt-daemon.sock input.wav [lang]
 ```
 
-Converts WAV/PCM to int16 PCM, streams in 32 KB chunks, prints transcription.
+Converts WAV/PCM to int16 PCM, sends raw bytes, sends SHUT_WR, prints result.
 
 ## Events
 
-Live events broadcast on `/tmp/stt-events.sock`:
+Live events broadcast on the daemon's event socket
+(`/tmp/monitor/STT-<pid>.sock`):
 
 | Event | Fields |
 |---|---|
@@ -93,7 +113,7 @@ Live events broadcast on `/tmp/stt-events.sock`:
 | `stt.buffer_reject` | `total_samples`, `max_samples` |
 | `stt.connection_close` | — |
 
-Monitor with: `models.sh monitor`
+Monitor with: `models daemon monitor`
 
 ## Configuration (`config.json`)
 
@@ -111,19 +131,11 @@ Monitor with: `models.sh monitor`
 
 ```
 STT/
-├── src/
-│   ├── stt_daemon.py     # Unix socket server, NDJSON loop
-│   ├── stt_client.py     # Streaming client
-│   ├── model.py          # load_engine() → STTEngine
-│   └── __init__.py
-├── config.json           # Model + daemon settings
-├── config.py             # Config loader
-├── .agent/               # Design docs, adapters
+├── stt_daemon.py     # Unix socket server, PCM16 loop
+├── stt_client.py     # Streaming client
+├── model.py          # load_engine() → STTEngine
+├── config.json       # Model + daemon settings
+├── config.py         # Config loader
 ├── README.md
 └── .gitignore
 ```
-
-## Old WebSocket server
-
-The previous WebSocket-based server (`server.py`, `handler.py`, `buffer.py`) has been
-removed. The daemon uses Unix sockets for lower overhead and persistent model loading.
