@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Send audio file to STT daemon in streaming PCM chunks. Prints transcription."""
+"""Send audio file to STT daemon as raw PCM16. Prints transcription."""
 
-import base64
-import io
 import json
 import socket
 import sys
 
 import numpy as np
-import scipy.io.wavfile as wav
 
 
 def main():
@@ -22,55 +19,38 @@ def main():
 
     ext = audio_path.rsplit(".", 1)[-1].lower()
 
-    # Load audio and convert to PCM float32
+    # Load audio → float32
     if ext in ("pcm", "raw"):
         with open(audio_path, "rb") as f:
-            raw = f.read()
-        arr = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    else:
+            arr = np.frombuffer(f.read(), dtype=np.int16).astype(np.float32) / 32768.0
+    elif ext == "wav":
+        import scipy.io.wavfile as wav
         rate, arr = wav.read(audio_path)
         if arr.dtype == np.int16:
             arr = arr.astype(np.float32) / 32768.0
         if len(arr.shape) > 1:
             arr = arr.mean(axis=1)
+    else:
+        print(f"Unsupported format: {ext}")
+        sys.exit(1)
 
-    # Convert float32 back to int16 PCM bytes for streaming
+    # float32 → int16 PCM bytes
     pcm_bytes = (arr * 32768.0).astype(np.int16).tobytes()
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(sock_path)
-    out = s.makefile("wb")
-    inp = s.makefile("rb")
 
-    if lang:
-        out.write(json.dumps({"type": "lang", "lang": lang}).encode() + b"\n")
-        out.flush()
+    # First line is always a \n-terminated language tag (or just \n for default)
+    s.sendall((lang or "").encode() + b"\n")
 
-    chunk_size = 32768  # 32 KB of PCM = ~1 second at 16 kHz
-    offset = 0
-    while offset < len(pcm_bytes):
-        chunk = pcm_bytes[offset:offset + chunk_size]
-        b64 = base64.b64encode(chunk).decode()
-        out.write(json.dumps({"type": "audio", "data": b64, "format": "pcm16"}).encode() + b"\n")
-        out.flush()
-        offset += chunk_size
+    # Raw PCM16
+    s.sendall(pcm_bytes)
+    s.shutdown(socket.SHUT_WR)
 
-    flush_msg = {"type": "flush"}
-    if lang:
-        flush_msg["lang"] = lang
-    out.write(json.dumps(flush_msg).encode() + b"\n")
-    out.flush()
-    out.close()
-
-    line = inp.readline()
-    inp.close()
+    # Read response
+    resp = json.loads(s.recv(65536).decode())
     s.close()
 
-    if not line:
-        print("Error: no response from daemon")
-        sys.exit(1)
-
-    resp = json.loads(line.decode())
     if "error" in resp:
         print(f"Error: {resp['error']}")
         sys.exit(1)
