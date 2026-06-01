@@ -3,8 +3,8 @@ ML_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 eval "$(python3 <<PYEOF
 import json, os
 cfg = json.load(open('$ML_DIR/daemon/config.json'))
-for k in ('venv', 'bus_dir'):
-    print(f'{k}={os.path.expandvars(cfg[k])}')
+print('declare VENV="' + os.path.expandvars(cfg['venv']) + '"')
+print('declare BUS_DIR="' + os.path.expandvars(cfg['bus_dir']) + '"')
 PYEOF
 )"
 
