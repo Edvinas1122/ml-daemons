@@ -9,12 +9,28 @@ import socket
 import sys
 import time
 
-SOCKETS = [
-    ("LLM", "/tmp/llm-events.sock"),
-    ("TTS", "/tmp/tts-events.sock"),
-    ("STT", "/tmp/stt-events.sock"),
-    ("SDXL", "/tmp/sdxl-events.sock"),
-]
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+
+
+def discover_sockets():
+    """Scan the bus directory for *.sock files."""
+    cfg = {"bus_dir": "/tmp/monitor/"}
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH) as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    bus_dir = cfg["bus_dir"]
+    if not os.path.isdir(bus_dir):
+        return []
+    result = []
+    for entry in os.listdir(bus_dir):
+        if entry.endswith(".sock"):
+            path = os.path.join(bus_dir, entry)
+            name = entry.rsplit("-", 1)[0] if "-" in entry else entry[:-5]
+            result.append((name, path))
+    return result
 
 COLORS = {
     "LLM": "\033[33m",
@@ -42,8 +58,13 @@ def main():
                         help="Event pattern to hide (repeatable, supports trailing wildcard)")
     args = parser.parse_args()
 
+    socks = discover_sockets()
+    if not socks:
+        print(f"No daemon bus sockets found in bus_dir. Start daemons first.")
+        sys.exit(1)
+
     conns = {}
-    for name, path in SOCKETS:
+    for name, path in socks:
         if os.path.exists(path):
             try:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

@@ -1,21 +1,18 @@
 VENV="$HOME/torch-env"
 ML_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUS_DIR="/tmp/monitor"
 
 LLM_SOCKET="/tmp/llm-daemon.sock"
 LLM_PID_FILE="/tmp/llm-daemon.pid"
-LLM_EVENTS="/tmp/llm-events.sock"
 TTS_SOCKET="/tmp/tts-daemon.sock"
 TTS_PID_FILE="/tmp/tts-daemon.pid"
-TTS_EVENTS="/tmp/tts-events.sock"
 STT_SOCKET="/tmp/stt-daemon.sock"
 STT_PID_FILE="/tmp/stt-daemon.pid"
-STT_EVENTS="/tmp/stt-events.sock"
 GEN_SOCKET="/tmp/sdxl-daemon.sock"
 GEN_PID_FILE="/tmp/sdxl-daemon.pid"
-GEN_EVENTS="/tmp/sdxl-events.sock"
 
 wait_for_socket() {
-  local sock=$1 pid=$2 label=$3 log=$4 event_sock=$5 timeout=${6:-300}
+  local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-300} event_sock="$BUS_DIR/$label-$pid.sock"
   "$VENV/bin/python3" "$ML_DIR/scripts/wait_ready.py" "$event_sock" "$pid" "$label" "$timeout" || {
     echo "$label failed or timed out — check $log"
     tail -3 "$log" 2>/dev/null
@@ -25,7 +22,7 @@ wait_for_socket() {
 }
 
 kill_pid() {
-  local pid_file=$1 name=$2 sock=$3 event_sock=$4
+  local pid_file=$1 name=$2 sock=$3
   if [ -f "$pid_file" ]; then
     local pid
     pid=$(cat "$pid_file")
@@ -39,7 +36,7 @@ kill_pid() {
     echo "  $name not running"
     return 0
   fi
-  rm -f "$sock" "$event_sock"
+  rm -f "$sock" $BUS_DIR/"$name"-*.sock
 }
 
 check_unix_socket() {
@@ -54,7 +51,7 @@ check_unix_socket() {
 }
 
 daemon_start() {
-  local name=$1 dir=$2 script=$3 sock=$4 pid_file=$5 log=$6 event_sock=$7
+  local name=$1 dir=$2 script=$3 sock=$4 pid_file=$5 log=$6
   if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     echo "$name already running (PID $(cat "$pid_file"))"
     return 0
@@ -79,5 +76,5 @@ daemon_start() {
   nohup "$VENV/bin/python3" "$script" --socket "$sock" > "$log" 2>&1 &
   local pid=$!
   echo "$pid" > "$pid_file"
-  wait_for_socket "$sock" "$pid" "$name" "$log" "$event_sock"
+  wait_for_socket "$sock" "$pid" "$name" "$log"
 }

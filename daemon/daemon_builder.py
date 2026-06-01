@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import socket
 import sys
@@ -28,13 +29,26 @@ import time
 
 from eventbus import EventBus
 
+def daemon_config():
+    """Load daemon builder config from ``daemon/config.json``.
 
-def parse_args(name, default_socket, default_event_socket, startup_timeout):
+    Returns a dict with keys like ``bus_dir`` (default: ``/tmp/monitor/``).
+    """
+    cfg = {"bus_dir": "/tmp/monitor/"}
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    return cfg
+
+
+def parse_args(name, default_socket, startup_timeout):
     parser = argparse.ArgumentParser(description=f"{name} daemon")
     parser.add_argument("--socket", default=default_socket,
                         help=f"Unix socket path (default: {default_socket})")
-    parser.add_argument("--event-socket", default=default_event_socket,
-                        help=f"Event/control bus socket path (default: {default_event_socket})")
     parser.add_argument("--startup-timeout", type=int, default=startup_timeout,
                         help="Seconds allowed for setup()")
     return parser.parse_args()
@@ -62,7 +76,6 @@ def run_daemon(
     name,
     *,
     default_socket,
-    default_event_socket,
     setup,
     handle_client,
     teardown=None,
@@ -71,8 +84,9 @@ def run_daemon(
 ):
     """Run a Unix socket daemon.
 
-    The event/control bus (single socket) handles both event broadcasting
-    (for monitor) and JSON command-response (ping/status/shutdown).
+    The event/control bus (single socket in ``daemon_config()["bus_dir"]``)
+    handles both event broadcasting (for monitor) and JSON command-response
+    (ping/status/shutdown).
 
     Parameters
     ----------
@@ -80,8 +94,6 @@ def run_daemon(
         Human-readable daemon name (printed in logs).
     default_socket : str
         Default Unix socket path for client requests.
-    default_event_socket : str
-        Default bus socket path (events + control commands).
     setup : callable[[], any]
         Called once before the accept loop. Return value is passed to
         handle_client and teardown as `state`.
@@ -95,15 +107,20 @@ def run_daemon(
     startup_timeout : int
         Maximum seconds to wait for setup() before giving up.
     """
-    args = parse_args(name, default_socket, default_event_socket, startup_timeout)
+    args = parse_args(name, default_socket, startup_timeout)
+
+    cfg = daemon_config()
+    bus_dir = cfg["bus_dir"]
+    os.makedirs(bus_dir, exist_ok=True)
+    bus_socket = os.path.join(bus_dir, f"{name}-{os.getpid()}.sock")
 
     if os.path.exists(args.socket):
         os.unlink(args.socket)
-    if os.path.exists(args.event_socket):
-        os.unlink(args.event_socket)
+    if os.path.exists(bus_socket):
+        os.unlink(bus_socket)
 
     # ── Event/control bus ──────────────────────────────
-    bus = EventBus(args.event_socket)
+    bus = EventBus(bus_socket)
     bus.start()
 
     # Create socket early so bash sees it immediately
@@ -122,7 +139,7 @@ def run_daemon(
     server.listen(max_connections)
     bus.emit("status", status="ready")
     print(f"{name} daemon ready on {args.socket}", flush=True)
-    print(f"  bus on {args.event_socket}", flush=True)
+    print(f"  bus on {bus_socket}", flush=True)
 
     def _handle(conn):
         try:
