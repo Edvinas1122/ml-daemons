@@ -68,12 +68,11 @@ def run_daemon(
     teardown=None,
     max_connections=5,
     startup_timeout=60,
-    control_handlers=None,
 ):
     """Run a Unix socket daemon.
 
     The event/control bus (single socket) handles both event broadcasting
-    (for monitor) and JSON command-response (for management).
+    (for monitor) and JSON command-response (ping/status/shutdown).
 
     Parameters
     ----------
@@ -95,8 +94,6 @@ def run_daemon(
         Max concurrent client threads (passed to listen() and Semaphore).
     startup_timeout : int
         Maximum seconds to wait for setup() before giving up.
-    control_handlers : dict or None
-        Custom command handlers for the bus: ``{name: callable(cmd, state, bus) → dict}``.
     """
     args = parse_args(name, default_socket, default_event_socket, startup_timeout)
 
@@ -118,8 +115,8 @@ def run_daemon(
     # ── Setup (with timeout) ───────────────────────────
     state, _ = handle_start(setup, bus, args.startup_timeout)
 
-    # Register control handlers (must be after setup so state is ready)
-    bus.set_handlers(control_handlers or {}, state, bus, teardown_fn=teardown)
+    # Register built-in control handlers on the bus
+    bus.set_handlers({}, state, bus, teardown_fn=teardown)
 
     # Signal readiness to bash
     server.listen(max_connections)
