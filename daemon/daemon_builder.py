@@ -20,16 +20,18 @@ Usage:
 """
 
 import argparse
+import json
 import os
+import signal
 import socket
 import sys
 import threading
+import time
 
 from eventbus import EventBus
 
 
 def parse_args(name, default_socket, default_event_socket, startup_timeout):
-    ready_file = default_socket + ".ready"
     parser = argparse.ArgumentParser(description=f"{name} daemon")
     parser.add_argument("--socket", default=default_socket,
                         help=f"Unix socket path (default: {default_socket})")
@@ -37,8 +39,6 @@ def parse_args(name, default_socket, default_event_socket, startup_timeout):
                         help=f"Event bus socket path (default: {default_event_socket})")
     parser.add_argument("--startup-timeout", type=int, default=startup_timeout,
                         help="Seconds allowed for setup()")
-    parser.add_argument("--ready-file", default=ready_file,
-                        help="Path written after setup() completes")
     return parser.parse_args()
 
 
@@ -47,8 +47,7 @@ def handle_start(setup_fn, bus, startup_timeout):
 
     Returns (state, elapsed_seconds).
     """
-    if bus:
-        bus.emit("setup", status="started")
+    bus.emit("setup", status="started")
     t0 = time.time()
     timer = threading.Timer(startup_timeout, lambda: os._exit(1))
     timer.start()
@@ -57,21 +56,98 @@ def handle_start(setup_fn, bus, startup_timeout):
     finally:
         timer.cancel()
     elapsed = time.time() - t0
-    if bus:
-        bus.emit("setup", status="ended", elapsed=round(elapsed, 2))
+    bus.emit("setup", status="ended", elapsed=round(elapsed, 2))
     return state, elapsed
+
+
+def run_control(ctrl_path, state, bus, teardown_fn=None, handlers=None):
+    """Start a background thread listening for JSON commands on a Unix socket.
+
+    Built-in commands (always available):
+      ``{"cmd": "ping"}``     → ``{"ok": true}``
+      ``{"cmd": "status"}``   → ``{"pid": .., "uptime": .., "state_keys": [...]}``
+      ``{"cmd": "shutdown"}`` → sends SIGTERM to self (triggers graceful exit)
+
+    Custom commands are provided as a dict mapping command names to callables::
+
+        def my_handler(cmd, state, bus) -> dict:
+            return {"result": ...}
+
+    The returned thread is a daemon thread.
+    """
+    if os.path.exists(ctrl_path):
+        os.unlink(ctrl_path)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(ctrl_path)
+    server.listen(5)
+    os.chmod(ctrl_path, 0o777)
+
+    builtins = {}
+    start = time.time()
+
+    def _ping(cmd, state, bus):
+        return {"ok": True}
+
+    def _status(cmd, state, bus):
+        return {"pid": os.getpid(), "uptime": round(time.time() - start, 2), "state_keys": list(state.keys()) if isinstance(state, dict) else None}
+
+    def _shutdown(cmd, state, bus):
+        os.kill(os.getpid(), signal.SIGTERM)
+        return {"ok": True}
+
+    builtins["ping"] = _ping
+    builtins["status"] = _status
+    builtins["shutdown"] = _shutdown
+
+    all_handlers = dict(builtins)
+    if handlers:
+        all_handlers.update(handlers)
+
+    def _control_loop():
+        while True:
+            try:
+                conn, _ = server.accept()
+                data = conn.recv(65536).strip()
+                if not data:
+                    conn.close()
+                    continue
+                try:
+                    cmd = json.loads(data)
+                    name = cmd.get("cmd", "")
+                    fn = all_handlers.get(name)
+                    if fn:
+                        reply = fn(cmd, state, bus)
+                    else:
+                        reply = {"error": f"unknown command: {name}"}
+                except Exception as exc:
+                    reply = {"error": str(exc)}
+                payload = (json.dumps(reply) + "\n").encode()
+                conn.sendall(payload)
+                conn.close()
+            except Exception:
+                break
+        server.close()
+        if os.path.exists(ctrl_path):
+            os.unlink(ctrl_path)
+
+    t = threading.Thread(target=_control_loop, daemon=True, name=f"{os.path.basename(ctrl_path)}-ctrl")
+    t.start()
+    return t
 
 
 def run_daemon(
     name,
     *,
     default_socket,
-    default_event_socket=None,
+    default_event_socket,
+    default_control_socket=None,
     setup,
     handle_client,
     teardown=None,
     max_connections=5,
     startup_timeout=60,
+    control_handlers=None,
 ):
     """Run a Unix socket daemon.
 
@@ -81,12 +157,14 @@ def run_daemon(
         Human-readable daemon name (printed in logs).
     default_socket : str
         Default Unix socket path.
-    default_event_socket : str or None
-        Default event bus socket path (None to disable events).
+    default_event_socket : str
+        Event bus socket path (every daemon must have a bus).
+    default_control_socket : str or None
+        Optional control socket path for JSON commands.
     setup : callable[[], any]
         Called once before the accept loop. Return value is passed to
         handle_client and teardown as `state`.
-    handle_client : callable[[socket, any, EventBus|None], None]
+    handle_client : callable[[socket, any, EventBus], None]
         Called in a new thread per connection.
         Signature: (conn, state, bus).
     teardown : callable[[any], None] or None
@@ -95,20 +173,19 @@ def run_daemon(
         Max concurrent client threads (passed to listen() and Semaphore).
     startup_timeout : int
         Maximum seconds to wait for setup() before giving up.
-        The caller (bash wait_for_socket) uses this to know how long to poll.
+    control_handlers : dict or None
+        Custom commands for the control socket.
     """
     args = parse_args(name, default_socket, default_event_socket, startup_timeout)
 
     if os.path.exists(args.socket):
         os.unlink(args.socket)
-    if os.path.exists(args.ready_file):
-        os.unlink(args.ready_file)
+    if os.path.exists(args.event_socket):
+        os.unlink(args.event_socket)
 
     # ── Event bus ──────────────────────────────────────
-    bus = None
-    if default_event_socket:
-        bus = EventBus(args.event_socket)
-        bus.start()
+    bus = EventBus(args.event_socket)
+    bus.start()
 
     # Create socket early so bash sees it immediately
     sem = threading.Semaphore(max_connections)
@@ -119,13 +196,17 @@ def run_daemon(
     # ── Setup (with timeout) ───────────────────────────
     state, _ = handle_start(setup, bus, args.startup_timeout)
 
+    # ── Control socket ─────────────────────────────────
+    if default_control_socket:
+        run_control(default_control_socket, state, bus, teardown_fn=teardown, handlers=control_handlers)
+
     # Signal readiness to bash
-    with open(args.ready_file, "w") as f:
-        f.write("ready")
     server.listen(max_connections)
+    bus.emit("status", status="ready")
     print(f"{name} daemon ready on {args.socket}", flush=True)
-    if bus:
-        print(f"  events on {args.event_socket}", flush=True)
+    print(f"  events on {args.event_socket}", flush=True)
+    if default_control_socket:
+        print(f"  control on {default_control_socket}", flush=True)
 
     def _handle(conn):
         try:
@@ -144,12 +225,11 @@ def run_daemon(
     except KeyboardInterrupt:
         pass
     finally:
-        if bus:
-            bus.stop()
+        bus.stop()
         if teardown:
             teardown(state)
         server.close()
         if os.path.exists(args.socket):
             os.unlink(args.socket)
-        if os.path.exists(args.ready_file):
-            os.unlink(args.ready_file)
+        if default_control_socket and os.path.exists(default_control_socket):
+            os.unlink(default_control_socket)

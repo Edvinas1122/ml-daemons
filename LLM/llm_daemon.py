@@ -99,6 +99,7 @@ if __name__ == "__main__":
         "LLM",
         default_socket="/tmp/llm-daemon.sock",
         default_event_socket="/tmp/llm-events.sock",
+        default_control_socket="/tmp/llm-ctrl.sock",
         setup=setup,
         handle_client=handle_client,
         startup_timeout=120,
