@@ -14,11 +14,10 @@ EOF
 
 case "${1:-help}" in
   start)
-    daemon_start "LLM" "$ML_ROOT/LLM" "llm_daemon.py" "$LLM_SOCKET" "$LLM_PID_FILE" /tmp/llm-daemon.log
+    daemon_start "LLM" "$ML_ROOT/LLM" "llm_daemon.py" "$LLM_SOCKET" "$LLM_PID_FILE" /tmp/llm-daemon.log 120
     ;;
   stop)
-    kill_pid "$LLM_PID_FILE" "LLM"
-    rm -f "$LLM_SOCKET"
+    kill_pid "$LLM_PID_FILE" "LLM" "$LLM_SOCKET"
     ;;
   help|--help|-h)
     usage

@@ -17,8 +17,7 @@ case "${1:-help}" in
     daemon_start "SDXL" "$ML_ROOT/Generate" "sdxl_daemon.py" "$GEN_SOCKET" "$GEN_PID_FILE" /tmp/sdxl-daemon.log
     ;;
   stop)
-    kill_pid "$GEN_PID_FILE" "SDXL"
-    rm -f "$GEN_SOCKET"
+    kill_pid "$GEN_PID_FILE" "SDXL" "$GEN_SOCKET"
     ;;
   gen|generate)
     shift

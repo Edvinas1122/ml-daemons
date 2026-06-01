@@ -17,8 +17,7 @@ case "${1:-help}" in
     daemon_start "TTS" "$ML_ROOT/TTS" "tts_daemon.py" "$TTS_SOCKET" "$TTS_PID_FILE" /tmp/tts-daemon.log
     ;;
   stop)
-    kill_pid "$TTS_PID_FILE" "TTS"
-    rm -f "$TTS_SOCKET"
+    kill_pid "$TTS_PID_FILE" "TTS" "$TTS_SOCKET"
     ;;
   synthesize)
     shift

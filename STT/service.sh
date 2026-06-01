@@ -17,8 +17,7 @@ case "${1:-help}" in
     daemon_start "STT" "$ML_ROOT/STT" "stt_daemon.py" "$STT_SOCKET" "$STT_PID_FILE" /tmp/stt-daemon.log
     ;;
   stop)
-    kill_pid "$STT_PID_FILE" "STT"
-    rm -f "$STT_SOCKET"
+    kill_pid "$STT_PID_FILE" "STT" "$STT_SOCKET"
     ;;
   transcribe)
     shift
