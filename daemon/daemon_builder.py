@@ -28,43 +28,29 @@ import threading
 from eventbus import EventBus
 
 
-def handle_start(name, default_socket, default_event_socket, setup_fn, startup_timeout, max_connections):
-    """Parse CLI args, set up socket + event bus, run setup_fn with timeout.
-
-    Returns (server, state, bus, sem, args) for the caller to enter the accept loop.
-    """
+def parse_args(name, default_socket, default_event_socket, startup_timeout):
     ready_file = default_socket + ".ready"
-
     parser = argparse.ArgumentParser(description=f"{name} daemon")
     parser.add_argument("--socket", default=default_socket,
                         help=f"Unix socket path (default: {default_socket})")
     parser.add_argument("--event-socket", default=default_event_socket,
                         help=f"Event bus socket path (default: {default_event_socket})")
     parser.add_argument("--startup-timeout", type=int, default=startup_timeout,
-                        help="Seconds allowed for setup_fn()")
+                        help="Seconds allowed for setup()")
     parser.add_argument("--ready-file", default=ready_file,
-                        help="Path written after setup_fn() completes")
-    args = parser.parse_args()
+                        help="Path written after setup() completes")
+    return parser.parse_args()
 
-    if os.path.exists(args.socket):
-        os.unlink(args.socket)
-    if os.path.exists(args.ready_file):
-        os.unlink(args.ready_file)
 
-    bus = None
-    if default_event_socket:
-        bus = EventBus(args.event_socket)
-        bus.start()
+def handle_start(setup_fn, bus, startup_timeout):
+    """Run setup_fn with a hard timeout, emit bus events.
 
-    sem = threading.Semaphore(max_connections)
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(args.socket)
-    os.chmod(args.socket, 0o777)
-
+    Returns (state, elapsed_seconds).
+    """
     if bus:
         bus.emit("setup", status="started")
     t0 = time.time()
-    timer = threading.Timer(args.startup_timeout, lambda: os._exit(1))
+    timer = threading.Timer(startup_timeout, lambda: os._exit(1))
     timer.start()
     try:
         state = setup_fn()
@@ -73,15 +59,7 @@ def handle_start(name, default_socket, default_event_socket, setup_fn, startup_t
     elapsed = time.time() - t0
     if bus:
         bus.emit("setup", status="ended", elapsed=round(elapsed, 2))
-
-    with open(args.ready_file, "w") as f:
-        f.write("ready")
-    server.listen(max_connections)
-    print(f"{name} daemon ready on {args.socket}", flush=True)
-    if bus:
-        print(f"  events on {args.event_socket}", flush=True)
-
-    return server, state, bus, sem, args
+    return state, elapsed
 
 
 def run_daemon(
@@ -119,7 +97,35 @@ def run_daemon(
         Maximum seconds to wait for setup() before giving up.
         The caller (bash wait_for_socket) uses this to know how long to poll.
     """
-    server, state, bus, sem, args = handle_start(name, default_socket, default_event_socket, setup, startup_timeout, max_connections)
+    args = parse_args(name, default_socket, default_event_socket, startup_timeout)
+
+    if os.path.exists(args.socket):
+        os.unlink(args.socket)
+    if os.path.exists(args.ready_file):
+        os.unlink(args.ready_file)
+
+    # ── Event bus ──────────────────────────────────────
+    bus = None
+    if default_event_socket:
+        bus = EventBus(args.event_socket)
+        bus.start()
+
+    # Create socket early so bash sees it immediately
+    sem = threading.Semaphore(max_connections)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(args.socket)
+    os.chmod(args.socket, 0o777)
+
+    # ── Setup (with timeout) ───────────────────────────
+    state, _ = handle_start(setup, bus, args.startup_timeout)
+
+    # Signal readiness to bash
+    with open(args.ready_file, "w") as f:
+        f.write("ready")
+    server.listen(max_connections)
+    print(f"{name} daemon ready on {args.socket}", flush=True)
+    if bus:
+        print(f"  events on {args.event_socket}", flush=True)
 
     def _handle(conn):
         try:
@@ -129,6 +135,7 @@ def run_daemon(
         finally:
             sem.release()
 
+    # ── Accept loop ────────────────────────────────────
     try:
         while True:
             conn, _ = server.accept()
