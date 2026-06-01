@@ -12,7 +12,6 @@ from diffusers import StableDiffusionXLPipeline
 
 _ML = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ML, "daemon"))
-sys.path.insert(0, os.path.join(_ML, "monitor"))
 
 import config
 from daemon_builder import run_daemon
@@ -20,8 +19,10 @@ from daemon_builder import run_daemon
 
 def setup():
     t0 = time.time()
+    model_id = config.get("model", "stabilityai/stable-diffusion-xl-base-1.0")
+    print(f"Loading model: {model_id}", flush=True)
     pipe = StableDiffusionXLPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-xl-base-1.0",
+        model_id,
         torch_dtype=torch.float16,
         use_safetensors=True,
         variant="fp16",

@@ -15,7 +15,6 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 _ML = os.path.dirname(_DIR)
 sys.path.insert(0, _DIR)
 sys.path.insert(0, os.path.join(_ML, "daemon"))
-sys.path.insert(0, os.path.join(_ML, "monitor"))
 
 import config
 from daemon_builder import run_daemon

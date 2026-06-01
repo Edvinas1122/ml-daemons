@@ -11,7 +11,6 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 _ML = os.path.dirname(_DIR)
 sys.path.insert(0, _DIR)
 sys.path.insert(0, os.path.join(_ML, "daemon"))
-sys.path.insert(0, os.path.join(_ML, "monitor"))
 
 import config
 from daemon_builder import run_daemon
@@ -19,12 +18,12 @@ from model import load_engine, create_session, load_voices_config, get_default_v
 
 
 def setup():
-    engine = load_engine(config.get("model_path"), verbose=config.get("verbose"))
     voices = load_voices_config()
     default_voice = get_default_voice(voices)
     if not default_voice:
         print("No voices found!", flush=True)
         sys.exit(1)
+    engine = load_engine(config.get("model_path"), verbose=config.get("verbose"))
     session = create_session(engine, default_voice)
     print(f"Default voice: {default_voice['name']} ({len(voices)} available)", flush=True)
     return {"session": session, "voices": voices}

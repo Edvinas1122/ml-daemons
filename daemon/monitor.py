@@ -10,12 +10,14 @@ import sys
 import time
 
 SOCKETS = [
+    ("LLM", "/tmp/llm-events.sock"),
     ("TTS", "/tmp/tts-events.sock"),
     ("STT", "/tmp/stt-events.sock"),
     ("SDXL", "/tmp/sdxl-events.sock"),
 ]
 
 COLORS = {
+    "LLM": "\033[33m",
     "TTS": "\033[32m",
     "STT": "\033[34m",
     "SDXL": "\033[35m",
