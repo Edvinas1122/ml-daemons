@@ -10,9 +10,9 @@ GEN_SOCKET="/tmp/sdxl-daemon.sock"
 GEN_PID_FILE="/tmp/sdxl-daemon.pid"
 
 wait_for_socket() {
-  local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-60} i
+  local sock=$1 pid=$2 label=$3 log=$4 timeout=${5:-300} ready="${sock}.ready" i
   for i in $(seq 1 "$timeout"); do
-    if [ -S "$sock" ]; then
+    if [ -f "$ready" ]; then
       echo "$label ready at $sock"
       return 0
     fi
@@ -42,7 +42,7 @@ kill_pid() {
     echo "  $name not running"
     return 0
   fi
-  rm -f "$sock"
+  rm -f "$sock" "${sock}.ready"
 }
 
 check_unix_socket() {
@@ -57,7 +57,7 @@ check_unix_socket() {
 }
 
 daemon_start() {
-  local name=$1 dir=$2 script=$3 sock=$4 pid_file=$5 log=$6 timeout=${7:-60}
+  local name=$1 dir=$2 script=$3 sock=$4 pid_file=$5 log=$6
   if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     echo "$name already running (PID $(cat "$pid_file"))"
     return 0
@@ -77,10 +77,10 @@ daemon_start() {
     kill $existing 2>/dev/null
     sleep 2
   fi
-  rm -f "$pid_file"
+  rm -f "$pid_file" "${sock}.ready"
   cd "$dir"
   nohup "$VENV/bin/python3" "$script" --socket "$sock" > "$log" 2>&1 &
   local pid=$!
   echo "$pid" > "$pid_file"
-  wait_for_socket "$sock" "$pid" "$name" "$log" "$timeout"
+  wait_for_socket "$sock" "$pid" "$name" "$log"
 }

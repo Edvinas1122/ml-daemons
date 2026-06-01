@@ -101,4 +101,5 @@ if __name__ == "__main__":
         default_event_socket="/tmp/llm-events.sock",
         setup=setup,
         handle_client=handle_client,
+        startup_timeout=120,
     )

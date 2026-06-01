@@ -37,6 +37,7 @@ def run_daemon(
     handle_client,
     teardown=None,
     max_connections=5,
+    startup_timeout=60,
 ):
     """Run a Unix socket daemon.
 
@@ -58,16 +59,27 @@ def run_daemon(
         Called once on shutdown with the state object.
     max_connections : int
         Max concurrent client threads (passed to listen() and Semaphore).
+    startup_timeout : int
+        Maximum seconds to wait for setup() before giving up.
+        The caller (bash wait_for_socket) uses this to know how long to poll.
     """
+    ready_file = default_socket + ".ready"
+
     parser = argparse.ArgumentParser(description=f"{name} daemon")
     parser.add_argument("--socket", default=default_socket,
                         help=f"Unix socket path (default: {default_socket})")
     parser.add_argument("--event-socket", default=default_event_socket,
                         help=f"Event bus socket path (default: {default_event_socket})")
+    parser.add_argument("--startup-timeout", type=int, default=startup_timeout,
+                        help="Seconds allowed for setup()")
+    parser.add_argument("--ready-file", default=ready_file,
+                        help="Path written after setup() completes")
     args = parser.parse_args()
 
     if os.path.exists(args.socket):
         os.unlink(args.socket)
+    if os.path.exists(args.ready_file):
+        os.unlink(args.ready_file)
 
     # ── Event bus ──────────────────────────────────────
     bus = None
@@ -75,16 +87,19 @@ def run_daemon(
         bus = EventBus(args.event_socket)
         bus.start()
 
-    # ── Setup ──────────────────────────────────────────
-    state = setup()
-
-    # ── Server socket ──────────────────────────────────
+    # Create socket early so bash sees it immediately
     sem = threading.Semaphore(max_connections)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(args.socket)
-    server.listen(max_connections)
     os.chmod(args.socket, 0o777)
 
+    # ── Setup ──────────────────────────────────────────
+    state = setup()
+
+    # Signal readiness to bash
+    with open(args.ready_file, "w") as f:
+        f.write("ready")
+    server.listen(max_connections)
     print(f"{name} daemon ready on {args.socket}", flush=True)
     if bus:
         print(f"  events on {args.event_socket}", flush=True)
@@ -113,3 +128,5 @@ def run_daemon(
         server.close()
         if os.path.exists(args.socket):
             os.unlink(args.socket)
+        if os.path.exists(args.ready_file):
+            os.unlink(args.ready_file)
