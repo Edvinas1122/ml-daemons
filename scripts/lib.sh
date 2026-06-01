@@ -11,7 +11,7 @@ GEN_PID_FILE="/tmp/sdxl-daemon.pid"
 
 wait_for_socket() {
   local sock=$1 pid=$2 label=$3 log=$4 i
-  for i in $(seq 1 60); do
+  for i in $(seq 1 120); do
     if [ -S "$sock" ]; then
       echo "$label ready at $sock"
       return 0
