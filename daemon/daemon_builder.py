@@ -149,16 +149,8 @@ def run_daemon(
             handle_client(conn, state, bus)
         except socket.timeout:
             bus.emit(f"{name}.connection_timeout")
-            try:
-                conn.sendall(b"ERROR: Timeout\n")
-            except:
-                pass
         except Exception as e:
             bus.emit(f"{name}.connection_error", error=str(e))
-            try:
-                conn.sendall(f"ERROR: {str(e)}\n".encode())
-            except:
-                pass
         finally:
             try:
                 conn.shutdown(socket.SHUT_RDWR)  # Graceful shutdown

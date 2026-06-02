@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Send TTS request to daemon, accumulate streaming audio, save WAV."""
+"""Send TTS request to daemon, read raw PCM16, save WAV."""
 
-import base64
-import io
 import json
 import os
 import socket
@@ -31,46 +29,47 @@ def main():
     if lang:
         msg["lang"] = lang
 
+    # ── Send command + SHUT_WR ───────────────────────────────
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(sock_path)
-    s.sendall(json.dumps(msg).encode())
+    s.sendall(json.dumps(msg).encode() + b"\n")
     s.shutdown(socket.SHUT_WR)
 
-    inp = s.makefile("rb")
-    chunks = []
-    sample_rate = None
+    # ── Read status line ─────────────────────────────────────
+    f = s.makefile("rb")
+    status_line = f.readline()
+    status = json.loads(status_line.decode())
 
-    for line in inp:
-        res = json.loads(line.decode())
-        if res["type"] == "audio":
-            sample_rate = res.get("sample_rate", sample_rate)
-            chunks.append(np.frombuffer(base64.b64decode(res["data"]), dtype=np.int16))
-        elif res["type"] == "done":
-            break
-        elif res["type"] == "error":
-            print(f"Error: {res['error']}", file=sys.stderr)
-            sys.exit(1)
+    if status.get("status") == "error":
+        print(f"Error: {status['error']}", file=sys.stderr)
+        sys.exit(1)
 
-    inp.close()
+    sample_rate = status.get("sample_rate", 24000)
+    print(f"Sample rate: {sample_rate}", file=sys.stderr)
+
+    # ── Read raw PCM16 until EOF ─────────────────────────────
+    pcm = f.read()
+    f.close()
     s.close()
 
-    if not chunks:
+    if not pcm:
         print("Error: no audio received", file=sys.stderr)
         sys.exit(1)
 
-    audio = np.concatenate(chunks)
-    sr = sample_rate or 24000
+    audio = np.frombuffer(pcm, dtype=np.int16)
 
-    out_dir = os.environ.get("TTS_OUTPUT_DIR", os.path.expanduser(config.get("output_dir", "~/Music/tts")))
+    # ── Save WAV ─────────────────────────────────────────────
+    out_dir = os.environ.get("TTS_OUTPUT_DIR",
+                             os.path.expanduser(config.get("output_dir", "~/Music/tts")))
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in text)[:60]
     fname = f"{ts}_{safe}.wav"
     path = os.path.join(out_dir, fname)
     os.makedirs(out_dir, exist_ok=True)
-    wav.write(path, sr, audio)
+    wav.write(path, sample_rate, audio)
 
     print(f"Saved: {path}")
-    print(f"Sample rate: {sr}")
+    print(f"Samples: {len(audio)} ({len(audio) / sample_rate:.1f}s)")
 
 
 if __name__ == "__main__":

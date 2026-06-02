@@ -1,10 +1,11 @@
-# Voice TTS
+# TTS — Text-to-Speech Daemon
 
-[![GitHub](https://img.shields.io/badge/GitHub-Edvinas1122/TTS--WS--server-181717?logo=github)](https://github.com/Edvinas1122/TTS-WS-server)
+Unix socket text-to-speech daemon using `faster-qwen3-tts`.
+Keeps the model loaded between requests. Audio is streamed back as raw
+[PCM16](https://en.wikipedia.org/wiki/Pulse-code_modulation) signed
+16-bit little-endian samples at 24 kHz.
 
-CUDA-accelerated WebSocket TTS streaming server.
-
-**Model**: [Qwen/Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) via `faster-qwen3-tts`
+**Model**: [Qwen/Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) via `faster-qwen3-tts` (~1.5 GB, auto-downloaded)
 
 ## Prerequisites
 
@@ -13,110 +14,144 @@ CUDA-accelerated WebSocket TTS streaming server.
 | Driver | NVIDIA driver 595+ (CUDA 13.2) |
 | Python | 3.10+ |
 | PyTorch | 2.6+ with CUDA |
-| Model | [Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) (~1.5 GB, auto-downloaded on first run) |
+| Model | [Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) |
 
 > Tested on: RTX 2070 SUPER (8 GB), driver 595.71.05, CUDA 13.2
 
-### Install venv
+### Install
 
 ```bash
+# torch-env should already exist — if not:
 python3 -m venv ~/torch-env
 ~/torch-env/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-~/torch-env/bin/pip install faster-qwen3-tts websockets scipy numpy
+~/torch-env/bin/pip install faster-qwen3-tts scipy numpy
 ```
-
-## Start
-
-[![GitHub](https://img.shields.io/badge/GitHub-Edvinas1122/TTS--WS--server-181717?logo=github)](https://github.com/Edvinas1122/TTS-WS-server)
-
-CUDA-accelerated WebSocket TTS streaming server.
-
-**Model**: [Qwen/Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) via `faster-qwen3-tts`
 
 ## Start
 
 ```bash
-cd ~/Documents/code/TTS && ~/torch-env/bin/python server.py
+cd ~/Documents/code/ML/TTS && ~/torch-env/bin/python tts_daemon.py
 ```
 
-Listens on `ws://0.0.0.0:8765`.
+Or via the model manager:
 
-## Model lifetime — 3 stages
+```bash
+~/Documents/code/ML/models.sh tts start
+```
 
-| Stage | Scope | What |
+Listens on Unix socket `/tmp/tts-daemon.sock`.
+
+## Protocol
+
+Each connection is one request. The client connects, sends a JSON
+command, signals end of command with
+[`SHUT_WR`](https://man7.org/linux/man-pages/man2/shutdown.2.html),
+then reads the response until EOF.
+
+### Audio format
+
+Audio is raw signed 16-bit **little-endian** samples at **24 kHz**, mono.
+No WAV header, no RIFF wrapper, no Base64 — just consecutive sample bytes.
+
+A 1-second chunk at 24 kHz = 48 000 bytes (24 000 samples × 2 bytes each).
+
+[PCM — Wikipedia](https://en.wikipedia.org/wiki/Pulse-code_modulation)
+
+### Commands
+
+| Command | Fields | Description |
 |---|---|---|
-| **Engine** | Program | `FasterQwen3TTS.from_pretrained()` — loaded once, 4 GB VRAM |
-| **Session** | Connection | Holds `{voice, lang, speed}` per WS client. Created on connect, configurable via `configure` |
-| **Generate** | Request | `session.generate(text)` — streams audio chunks immediately using the session's voice/lang |
+| `synthesize` | `text` (required), `voice?`, `lang?` | Generate speech → raw PCM16 |
+| `voices` | — | List available voices → JSON |
 
-## WebSocket API
+### Connection lifecycle (synthesize)
 
-### Client → Server
+```
+  Client                          Daemon
+    │                                │
+    │── connect ────────────────────→│ [accept(2)](https://man7.org/linux/man-pages/man2/accept.2.html)
+    │                                │
+    │── {"type":"synthesize",        │
+    │    "text":"hello world"}\n ───→│ [send(2)](https://man7.org/linux/man-pages/man2/send.2.html)
+    │                                │
+    │── SHUT_WR ────────────────────→│ [shutdown(2)](https://man7.org/linux/man-pages/man2/shutdown.2.html)
+    │                                │ generate(text)
+    │                                │
+    │←── [raw PCM16 bytes] ──────────│ [send(2)](https://man7.org/linux/man-pages/man2/send.2.html) — chunk 1
+    │←── [raw PCM16 bytes] ──────────│ send() — chunk 2
+    │←── [raw PCM16 bytes] ──────────│ send() — chunk N
+    │                                │
+    │←── SHUT_WR ────────────────────│ EOF — audio complete
+    │                                │
+    │── recv() → EOF ───────────────→│ [recv(2)](https://man7.org/linux/man-pages/man2/recv.2.html)
+    │── close() ────────────────────→│
+```
 
-| Type | Fields | Description |
+On error (e.g. empty text), the daemon closes the connection without
+sending any data — the client receives EOF immediately.
+
+### Reading the response
+
+**synthesize:** read all bytes until EOF, interpret as signed 16-bit LE
+PCM16 at 24 kHz.
+
+**voices:** read all bytes until EOF, parse as JSON.
+
+### SHUT_WR — half-close
+
+[`shutdown(SHUT_WR)`](https://man7.org/linux/man-pages/man2/shutdown.2.html)
+closes only the client's write side of the connection. The
+client can still read — the daemon sends the response on the same socket.
+
+This is the mirror of the STT protocol: instead of PCM16 in → JSON out,
+it's JSON in → PCM16 out. Same framing, reversed direction.
+
+No delimiter framing, no Base64, no NDJSON. The byte stream
+and the half-close are the framing.
+
+## Client script
+
+```bash
+python tts_client.py /tmp/tts-daemon.sock "Hello world" [voice] [lang]
+```
+
+Saves a WAV file to `~/Music/tts/`.
+
+## Events
+
+Live events broadcast on the daemon's event socket
+(`/tmp/monitor/TTS-<pid>.sock`):
+
+| Event | Fields |
 |---|---|---|
-| `voices` | — | List available voices |
-| `configure` | `voice?`, `lang?`, `speed?` | Set session defaults |
-| `synthesize` | `text`, `id?`, `voice?`, `lang?` | Start TTS stream. `voice`/`lang` override session for this request |
-| `stop` | `id` | Cancel a running synthesize |
+| `tts.connection_open` | — |
+| `tts.synthesize_start` | `text`, `voice`, `lang` |
+| `tts.synthesize_done` | `text`, `samples` |
+| `tts.voices_listed` | `count` |
+| `tts.synthesize_error` | `error` |
 
-### Server → Client
+Monitor with: `models daemon monitor`
 
-| Type | Fields | Description |
-|---|---|---|
-| `error` | `message` | Error response |
-| `voices` | `voices: [{name, description, languages}]` | Voice catalog |
-| `configured` | `voice, lang, speed` | Confirms session change |
-| `started` | `id` | Synthesize accepted, streaming begins |
-| `audio` | `data: base64_wav, sample_rate, seq` | One audio chunk |
-| `done` | `chunks` | Stream completed |
-| `stopped` | `chunks`, `id?` | Stream cancelled (by `stop` or mid-stream break) |
-
-## Example flow
-
-```
-→ {"type":"configure", "voice":"ref_voice", "lang":"zh"}
-← {"type":"configured", "voice":"...", "lang":"chinese", "speed":1.0}
-→ {"type":"synthesize", "text":"你好", "id":"req-1"}
-← {"type":"started", "id":"req-1"}
-← {"type":"audio", "data":"...", "sample_rate":24000, "seq":0}
-← {"type":"audio", "data":"...", "sample_rate":24000, "seq":1}
-← {"type":"done", "chunks":12}
-```
-
-## Voices
-
-Defined in `voices/config.json`. Voice = timbre (from `.wav`), language = generation language — independent.
-
-```json
-{"name": "my_voice", "description": "...", "languages": ["en", "zh"]}
-```
-
-Add: place `voices/my_voice.wav` + `voices/my_voice.txt`, add entry to `config.json`.
-
-## Config
-
-`config.json` — server settings only (no voice defaults; default voice is marked in `voices/config.json`).
+## Configuration (`config.json`)
 
 | Key | Default | Description |
-|---|---|---|---|
-| `ws_port` | 8765 | Listen port |
-| `model_path` | Qwen/Qwen3-TTS-12Hz-0.6B-Base | HF model ID or local path |
-| `verbose` | false | Log chunks to stderr |
-| `device` | null | CUDA device (null = auto) |
+|---|---|---|
+| `model_path` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HF model ID or local path |
+| `ws_port` | 8766 | (legacy WebSocket port) |
+| `verbose` | `false` | Extra logging |
+| `device` | `null` | CUDA device (null = auto) |
 
-## Quick test
+## Files
 
-```bash
-~/torch-env/bin/python -c "
-import asyncio, websockets, json
-async def t():
-    async with websockets.connect('ws://localhost:8765') as ws:
-        await ws.send(json.dumps({'type':'synthesize', 'text':'Hello!'}))
-        async for m in ws:
-            d = json.loads(m)
-            if d['type'] == 'audio': print(f'chunk {d[\"seq\"]}')
-            elif d['type'] == 'done': print('done'); break
-asyncio.run(t())
-"
+```
+TTS/
+├── tts_daemon.py     # Unix socket server, raw PCM16 output
+├── tts_client.py     # WAV-saving client
+├── model.py          # load_engine(), Session
+├── config.json       # Model + daemon settings
+├── config.py         # Config loader
+├── voices/           # Reference voice WAVs
+├── service.sh        # models.sh entry
+├── README.md
+└── .gitignore
 ```
